@@ -156,4 +156,4 @@ export class CheckoutPage extends BasePage {
   }
 }
   
-  // TODO: Add confirmation page assertions
+  
