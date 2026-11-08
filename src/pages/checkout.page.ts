@@ -155,3 +155,5 @@ export class CheckoutPage extends BasePage {
     await this.payButton.click();
   }
 }
+  
+  // TODO: Add confirmation page assertions
