@@ -7,8 +7,14 @@ export class CheckoutPage extends BasePage {
   readonly dobInput: Locator;
   readonly emailInput: Locator;
   readonly phoneInput: Locator;
+  readonly esimRadio: Locator;
+  readonly physicalSimOption: Locator;
   readonly continueBtn: Locator;
   readonly cookieAcceptBtn: Locator;
+
+  // Billing / Shipping Address Locators
+  readonly streetAddressInput: Locator;
+  readonly addressSuggestion: Locator;
 
   // Dialog & Verification
   readonly firstDigitInput: Locator;
@@ -23,17 +29,43 @@ export class CheckoutPage extends BasePage {
 
   constructor(page: Page) {
     super(page);
-    this.firstNameInput = page.getByRole('textbox', { name: 'Nombre' });
-    this.lastNameInput = page.getByRole('textbox', { name: 'Apellido' });
-    this.dobInput = page.getByRole('textbox', { name: 'mm/dd/aaaa' });
-    this.emailInput = page.getByRole('textbox', { name: /example\.com/i });
-    this.phoneInput = page.getByRole('textbox', { name: /example: \(787\)/i });
-    this.continueBtn = page.getByRole('button', { name: 'Continuar' });
-    this.cookieAcceptBtn = page.locator('button').filter({ hasText: 'Aceptar todo' });
+
+    this.firstNameInput = page.locator('input[formcontrolname*="first" i], input[formcontrolname*="name" i]')
+      .or(page.getByRole('textbox', { name: /nombre|first name/i })).first();
+
+    this.lastNameInput = page.locator('input[formcontrolname*="last" i], input[formcontrolname*="apellido" i]')
+      .or(page.getByRole('textbox', { name: /apellido|last name/i })).first();
+
+    this.dobInput = page.locator('input[placeholder*="mm/dd" i], input[formcontrolname*="dob" i], input[formcontrolname*="birth" i]')
+      .or(page.getByRole('textbox', { name: /mm\/dd/i }))
+      .or(page.locator('form input[type="text"]').nth(2)).first();
+
+    this.emailInput = page.locator('input[type="email"], input[formcontrolname*="email" i], input[placeholder*="@"]')
+      .or(page.getByRole('textbox', { name: /email|correo|example\.com/i })).first();
+
+    this.phoneInput = page.locator('input[type="tel"], input[formcontrolname*="phone" i], input[placeholder*="787"]')
+      .or(page.getByRole('textbox', { name: /787|phone|tel/i })).first();
+
+    this.esimRadio = page.getByRole('radio', { name: /esim/i })
+      .or(page.getByText('eSIM', { exact: true }));
+
+    // Target the visible label directly to bypass pointer interception
+    this.physicalSimOption = page.locator('span.radioLabel, span.radio-checkmark, label')
+      .filter({ hasText: /sim física/i })
+      .or(page.getByText('SIM Física', { exact: false }))
+      .or(page.getByRole('radio', { name: /sim física/i })).first();
+
+    this.continueBtn = page.getByRole('button', { name: /continuar|continue/i });
+    this.cookieAcceptBtn = page.locator('button').filter({ hasText: /aceptar todo|accept all/i });
+
+    // Address elements
+    this.streetAddressInput = page.getByPlaceholder(/nombre de la calle y número|street name/i)
+      .or(page.locator('input[formcontrolname*="address" i], input[formcontrolname*="street" i]')).first();
+    this.addressSuggestion = page.locator('.mat-mdc-autocomplete-panel, .mat-mdc-option, mat-option, [role="option"]').first();
 
     // OTP Modal elements
     this.firstDigitInput = page.locator('#input-code-0-input-0, input[id*="input-code-0"]').first();
-    this.validateOtpBtn = page.getByRole('button', { name: 'Validar' });
+    this.validateOtpBtn = page.getByRole('button', { name: /validar|validate/i });
 
     // Braintree Hosted Field Iframes
     this.cardholderNameFrame = page.frameLocator('iframe[name="braintree-hosted-field-cardholderName"]');
@@ -46,16 +78,44 @@ export class CheckoutPage extends BasePage {
   async fillCustomerDetails(details: {
     firstName: string;
     lastName: string;
-    dob: string;
+    dob?: string;
     email: string;
     phone: string;
+    simType?: 'esim' | 'physical';
   }) {
     await this.firstNameInput.waitFor({ state: 'visible', timeout: 20000 });
+    await this.firstNameInput.click();
     await this.firstNameInput.fill(details.firstName);
+
+    await this.lastNameInput.click();
     await this.lastNameInput.fill(details.lastName);
-    await this.dobInput.fill(details.dob);
+
+    if (details.dob) {
+      if (await this.dobInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await this.dobInput.click();
+        await this.dobInput.pressSequentially(details.dob.replace(/\//g, ''), { delay: 50 });
+      }
+    }
+
+    await this.emailInput.click();
     await this.emailInput.fill(details.email);
+
+    await this.phoneInput.click();
     await this.phoneInput.fill(details.phone);
+
+    // Let the form settle before selecting SIM type
+    await this.page.waitForTimeout(500);
+
+    if (details.simType === 'physical') {
+      await this.physicalSimOption.waitFor({ state: 'visible', timeout: 10000 });
+      await this.physicalSimOption.scrollIntoViewIfNeeded();
+      // Click with force: true to bypass any styled overlay or span obstruction
+      await this.physicalSimOption.click({ force: true });
+    } else {
+      if (await this.esimRadio.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await this.esimRadio.click({ force: true });
+      }
+    }
   }
 
   async submitFormAndEnterDynamicOtp(): Promise<string> {
@@ -76,21 +136,17 @@ export class CheckoutPage extends BasePage {
 
     this.page.on('response', responseHandler);
 
-    // 1. Click Continuar to fire the OTP API
     await this.continueBtn.scrollIntoViewIfNeeded();
     await this.continueBtn.click({ force: true });
 
-    // 2. Cookie banner check
     try {
       if (await this.cookieAcceptBtn.isVisible({ timeout: 2000 })) {
         await this.cookieAcceptBtn.click();
       }
     } catch {}
 
-    // 3. Wait for OTP modal input
     await this.firstDigitInput.waitFor({ state: 'visible', timeout: 25000 });
 
-    // 4. Poll for the captured OTP
     const startTime = Date.now();
     while (!capturedOtp && Date.now() - startTime < 15000) {
       await this.page.waitForTimeout(200);
@@ -101,7 +157,6 @@ export class CheckoutPage extends BasePage {
       throw new Error('Failed to intercept OTP from network response payload.');
     }
 
-    // 5. Fill OTP digits
     const digits = capturedOtp.split('');
     for (let i = 0; i < digits.length; i++) {
       const input = this.page.locator(`#input-code-0-input-${i}`);
@@ -111,7 +166,6 @@ export class CheckoutPage extends BasePage {
       }
     }
 
-    // 6. Submit OTP verification
     await this.validateOtpBtn.waitFor({ state: 'visible' });
     await expect(this.validateOtpBtn).toBeEnabled({ timeout: 10000 });
     await this.validateOtpBtn.click();
@@ -119,41 +173,85 @@ export class CheckoutPage extends BasePage {
     return capturedOtp;
   }
 
+  async fillBillingAndShippingAddress(addressQuery: string = '525 calle') {
+    // 1. Wait for billing address route
+    await this.page.waitForURL(/.*billing-address.*/i, { timeout: 35000 });
+    await this.page.waitForTimeout(1000);
+
+    // 2. Type street address query
+    const addressInput = this.page.getByPlaceholder('Nombre de la calle y número')
+      .or(this.streetAddressInput).first();
+    await addressInput.waitFor({ state: 'visible', timeout: 15000 });
+    await addressInput.click();
+    await addressInput.fill(addressQuery);
+
+    // 3. Target and click the active autocomplete option
+    const predictionOption = this.page.getByRole('option', { name: /525 Calle 1/i })
+      .or(this.page.locator('mat-option:not([aria-disabled="true"])').filter({ hasText: /525/i }))
+      .first();
+
+    await predictionOption.waitFor({ state: 'visible', timeout: 15000 });
+    await predictionOption.click();
+    await this.page.waitForTimeout(1000);
+
+    // 4. Click first Continuar (triggers standardization)
+    const continueBtn = this.page.getByRole('button', { name: 'Continuar' });
+    await continueBtn.waitFor({ state: 'visible', timeout: 10000 });
+    await expect(continueBtn).toBeEnabled({ timeout: 10000 });
+    await continueBtn.click();
+
+    // 5. Dismiss any loading overlay
+    const loader = this.page.locator('lla-loader-container, .llac-loaders__opacity-50');
+    try {
+      await loader.waitFor({ state: 'hidden', timeout: 10000 });
+    } catch {}
+
+    // 6. If address standardization card/dialog appears, select the suggested address
+    const suggestedAddressRadio = this.page.locator('mat-radio-button, input[type="radio"], [role="radio"]')
+      .filter({ hasText: /sugerida|estandarizada|recomendada/i })
+      .or(this.page.locator('.mat-mdc-radio-button, mat-radio-button').first());
+
+    if (await suggestedAddressRadio.isVisible({ timeout: 4000 }).catch(() => false)) {
+      await suggestedAddressRadio.click({ force: true });
+      await this.page.waitForTimeout(500);
+    }
+
+    // 7. Click second Continuar once enabled
+    await expect(continueBtn).toBeEnabled({ timeout: 15000 });
+    await continueBtn.click();
+
+    // 8. Wait for transition to payment page
+    await this.page.waitForURL(/.*payment-tnc.*/i, { timeout: 35000 });
+  }
+  
+
   async fillPaymentDetailsAndPay(payment: {
     cardholderName: string;
     cardNumber: string;
     expirationDate: string;
     cvv: string;
   }) {
-    // Wait for the navigation to the payment screen
     await this.page.waitForURL(/.*payment-tnc.*/i, { timeout: 35000 });
 
-    // 1. Cardholder Name
     const nameInput = this.cardholderNameFrame.getByRole('textbox', { name: 'Cardholder Name' });
     await nameInput.waitFor({ state: 'visible', timeout: 20000 });
     await nameInput.click();
     await nameInput.fill(payment.cardholderName);
 
-    // 2. Credit Card Number
     const numberInput = this.cardNumberFrame.getByRole('textbox', { name: 'Credit Card Number' });
     await numberInput.click();
     await numberInput.fill(payment.cardNumber);
 
-    // 3. Expiration Date
     const expInput = this.expDateFrame.getByRole('textbox', { name: 'Expiration Date' });
     await expInput.click();
     await expInput.fill(payment.expirationDate);
 
-    // 4. CVV
     const cvvInput = this.cvvFrame.getByRole('textbox', { name: 'CVV' });
     await cvvInput.click();
     await cvvInput.fill(payment.cvv);
 
-    // 5. Pay button
     await this.payButton.scrollIntoViewIfNeeded();
     await expect(this.payButton).toBeEnabled({ timeout: 10000 });
     await this.payButton.click();
   }
 }
-  
-  
